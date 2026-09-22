@@ -296,22 +296,27 @@ def send_event(event_type, app_name="", title="", extra=None):
 
         payload = json.dumps(payload_dict).encode("utf-8")
         
-        # Always prioritize backend server port 5000
-        targets = ["http://localhost:5000"]
-        if s.get("server_url") and s["server_url"] not in targets:
-            targets.insert(0, s["server_url"])
+        targets = []
+        if s.get("server_url"):
+            clean_surl = s["server_url"].strip().rstrip("/")
+            if clean_surl:
+                targets.append(clean_surl)
+        if "http://localhost:5000" not in targets:
+            targets.append("http://localhost:5000")
 
         for u in targets:
             try:
+                base = u.rstrip("/")
                 req = urllib.request.Request(
-                    f"{u}/api/agent/event",
+                    f"{base}/api/agent/event",
                     data=payload,
                     headers={"Content-Type": "application/json"}
                 )
-                with urllib.request.urlopen(req, timeout=3) as res:
+                with urllib.request.urlopen(req, timeout=4) as res:
                     if res.status == 200:
                         break
-            except Exception:
+            except Exception as e:
+                log_debug(f"Failed sending event to {u}: {e}")
                 continue
     except Exception:
         pass
@@ -404,7 +409,8 @@ class AgentHandler(BaseHTTPRequestHandler):
             s["is_monitoring"] = False
             time.sleep(0.1)
 
-            s["server_url"]    = data.get("serverUrl", "http://localhost:5000")
+            raw_url = data.get("serverUrl", "http://localhost:5000") or "http://localhost:5000"
+            s["server_url"]    = raw_url.strip().rstrip("/")
             s["session_id"]    = data.get("sessionId", "")
             s["student_name"]  = data.get("name", "")
             s["roll_no"]       = data.get("rollNo", "")
