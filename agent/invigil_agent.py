@@ -27,23 +27,28 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
-def log_debug(msg):
-    try:
-        os.makedirs(r"C:\ProgramData\invigilAI", exist_ok=True)
-        with open(r"C:\ProgramData\invigilAI\agent_debug.log", "a", encoding="utf-8") as f:
-            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
+def get_install_dir():
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "invigilAI")
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-AGENT_NAME     = "invigilAI-Agent"
-INSTALL_DIR    = os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "invigilAI")
+INSTALL_DIR    = get_install_dir()
 INSTALL_PATH   = os.path.join(INSTALL_DIR, "invigilAI-Agent.exe")
 SESSION_FILE   = os.path.join(INSTALL_DIR, "active_session.json")
 STARTUP_KEY    = r"Software\Microsoft\Windows\CurrentVersion\Run"
 PORT           = 48123
 MARKER_FILE    = os.path.join(INSTALL_DIR, ".installed")
 DESKTOP_ALL    = 0x01FF
+
+def log_debug(msg):
+    try:
+        os.makedirs(INSTALL_DIR, exist_ok=True)
+        with open(os.path.join(INSTALL_DIR, "agent_debug.log"), "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+AGENT_NAME     = "invigilAI-Agent"
 
 # ── Win32 API Setup with explicit 64-bit signatures ───────────────────────────
 user32   = ctypes.windll.user32
@@ -494,7 +499,7 @@ if __name__ == "__main__":
         log_debug(f"Unhandled exception in __main__: {e}")
         import traceback
         try:
-            with open(r"C:\ProgramData\invigilAI\crash.log", "w", encoding="utf-8") as f:
+            with open(os.path.join(INSTALL_DIR, "crash.log"), "w", encoding="utf-8") as f:
                 traceback.print_exc(file=f)
         except Exception:
             pass

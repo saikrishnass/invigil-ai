@@ -24,22 +24,60 @@ export function StudentJoin() {
   const [socket,    setSocket]      = useState(null);
   const [error,     setError]       = useState('');
   const [agentState, setAgentState] = useState(AGENT_IDLE);
+  const [downloaded, setDownloaded] = useState(false);
+  const [webOnlyMode, setWebOnlyMode] = useState(false);
 
-  /* ── Agent detection ─────────────────────────────────────────── */
+  /* ── Agent detection with multi-host fallback ─────────────────── */
   const checkAgent = async () => {
     setAgentState(AGENT_CHECKING);
-    try {
-      const ctrl = new AbortController();
-      const tid  = setTimeout(() => ctrl.abort(), 2000);
-      const res  = await fetch('http://127.0.0.1:48123/ping', { signal: ctrl.signal });
-      clearTimeout(tid);
-      setAgentState(res.ok ? AGENT_FOUND : AGENT_MISSING);
-    } catch {
-      setAgentState(AGENT_MISSING);
+    for (const host of ['127.0.0.1', 'localhost']) {
+      try {
+        const ctrl = new AbortController();
+        const tid  = setTimeout(() => ctrl.abort(), 1800);
+        const res  = await fetch(`http://${host}:48123/ping`, { signal: ctrl.signal });
+        clearTimeout(tid);
+        if (res.ok) {
+          setAgentState(AGENT_FOUND);
+          return true;
+        }
+      } catch {
+        // try next host
+      }
     }
+    setAgentState(AGENT_MISSING);
+    return false;
   };
 
+  // Auto-check on initial page load
+  React.useEffect(() => {
+    checkAgent();
+  }, []);
+
+  // Auto-poll every 2.5s once downloaded or missing so the UI unlocks as soon as the app starts
+  React.useEffect(() => {
+    if (agentState === AGENT_FOUND || joined) return;
+    const interval = setInterval(async () => {
+      for (const host of ['127.0.0.1', 'localhost']) {
+        try {
+          const ctrl = new AbortController();
+          const tid = setTimeout(() => ctrl.abort(), 1200);
+          const res = await fetch(`http://${host}:48123/ping`, { signal: ctrl.signal });
+          clearTimeout(tid);
+          if (res.ok) {
+            setAgentState(AGENT_FOUND);
+            clearInterval(interval);
+            return;
+          }
+        } catch {
+          // keep searching
+        }
+      }
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [agentState, joined]);
+
   const downloadAgent = () => {
+    setDownloaded(true);
     const a = document.createElement('a');
     a.href = '/downloads/invigilAI-Agent.exe';
     a.setAttribute('download', 'invigilAI-Agent.exe');
@@ -98,42 +136,66 @@ export function StudentJoin() {
     }
   };
 
-  const canJoin = agentState === AGENT_FOUND;
+  const canJoin = agentState === AGENT_FOUND || webOnlyMode;
 
   /* ── Render helpers ──────────────────────────────────────────── */
   const AgentBadge = () => {
+    if (webOnlyMode && agentState !== AGENT_FOUND) {
+      return (
+        <div style={badge('#38bdf8', 'rgba(56,189,248,0.12)', 'rgba(56,189,248,0.3)')}>
+          <Monitor size={15} />
+          <span>🌐 Web Proctoring Mode Enabled (Tracking tab switches & window blur)</span>
+        </div>
+      );
+    }
+
     if (agentState === AGENT_IDLE) return null;
 
     if (agentState === AGENT_CHECKING) return (
       <div style={badge('#38bdf8', 'rgba(56,189,248,0.12)', 'rgba(56,189,248,0.3)')}>
         <Loader size={15} className="spin" />
-        <span>Checking for Desktop Agent…</span>
+        <span>Detecting Desktop Agent…</span>
       </div>
     );
 
     if (agentState === AGENT_FOUND) return (
       <div style={badge('#4ade80', 'rgba(34,197,94,0.12)', 'rgba(34,197,94,0.3)')}>
         <CheckCircle size={15} />
-        <span>✅ Desktop Agent is running — you're good to go!</span>
+        <span>✅ Desktop Agent Active — Universal Tracking Ready!</span>
       </div>
     );
 
-    // AGENT_MISSING
+    // AGENT_MISSING: Show crystal-clear instructions for Lab PCs
     return (
-      <div style={{ ...badge('#f59e0b', 'rgba(245,158,11,0.10)', 'rgba(245,158,11,0.3)'), flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
+      <div style={{ ...badge('#f59e0b', 'rgba(245,158,11,0.08)', 'rgba(245,158,11,0.25)'), flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <AlertCircle size={15} />
-          <span style={{ fontWeight: 700 }}>Agent not found on this PC</span>
+          <span style={{ fontWeight: 700 }}>Desktop Agent Not Running on this PC</span>
         </div>
-        <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          Download <strong>invigilAI-Agent.exe</strong>, run it, then click <strong>Check Again</strong>.
-        </p>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        
+        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6, background: 'rgba(0,0,0,0.25)', padding: '10px 12px', borderRadius: '8px', width: '100%' }}>
+          <div><strong>Step 1:</strong> Click <strong>Download Agent</strong> below.</div>
+          <div><strong>Step 2:</strong> Go to your <strong>Downloads</strong> folder and double-click <strong>invigilAI-Agent.exe</strong> to run it.</div>
+          <div><strong>Step 3:</strong> If Windows warns <em>"Windows protected your PC"</em>, click <strong>"More info" ➔ "Run anyway"</strong>.</div>
+          <div style={{ color: '#38bdf8', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Loader size={12} className="spin" />
+            <span>Auto-detecting... This box turns green automatically once opened!</span>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>
           <button type="button" onClick={downloadAgent} className="btn-primary" style={{ padding: '6px 14px', fontSize: '0.78rem', gap: '6px' }}>
-            <Download size={13} /> Download Agent (.exe)
+            <Download size={13} /> {downloaded ? 'Downloaded (Download Again)' : 'Download Agent (.exe)'}
           </button>
           <button type="button" onClick={checkAgent} className="btn-secondary" style={{ padding: '6px 14px', fontSize: '0.78rem' }}>
             Check Again
+          </button>
+          <button 
+            type="button" 
+            onClick={() => setWebOnlyMode(true)} 
+            style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', fontSize: '0.74rem', textDecoration: 'underline', cursor: 'pointer', padding: '4px 6px', marginLeft: 'auto' }}
+          >
+            Lab PC blocking .exe? Join with Browser Tab Proctoring
           </button>
         </div>
       </div>
