@@ -28,7 +28,8 @@ export function StudentJoin() {
   const [webOnlyMode, setWebOnlyMode]     = useState(false);
   const [isLaunching, setIsLaunching]     = useState(false);
   const [launchBlocked, setLaunchBlocked] = useState(false);
-  const [screenSharing, setScreenSharing] = useState(false);
+  const [screenSharing, setScreenSharing]   = useState(false);
+  const [screenShareError, setScreenShareError] = useState('');
 
   const screenIntervalRef = useRef(null);
   const socketRef         = useRef(null);
@@ -78,40 +79,69 @@ export function StudentJoin() {
     document.body.removeChild(a);
   };
 
-  /* ── Screen capture — send JPEG frames to server via socket ──── */
+  /* ── Screen capture — enforce ENTIRE SCREEN only ─────────────── */
   const startScreenCapture = async (s) => {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { max: 1 } },
-        audio: false
-      });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      let stream = null;
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            displaySurface: 'monitor', // hint to Chrome: prefer Entire Screen
+            width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { max: 1 }
+          },
+          audio: false
+        });
 
-      const video = document.createElement('video');
-      video.srcObject = stream;
-      video.muted = true;
-      await video.play();
+        // ── Enforce Entire Screen only ────────────────────────────
+        const track   = stream.getVideoTracks()[0];
+        const surface = track?.getSettings?.()?.displaySurface;
 
-      const canvas = document.createElement('canvas');
-      canvas.width  = 1280;
-      canvas.height = 720;
-      const ctx = canvas.getContext('2d');
+        if (surface && surface !== 'monitor') {
+          // Student picked a Tab or Window — reject and ask again
+          stream.getTracks().forEach(t => t.stop());
+          setScreenShareError(
+            surface === 'browser'
+              ? '⚠️ You selected a Browser Tab. Please click "Share" again and choose "Entire Screen".'
+              : '⚠️ You selected a Window. Please click "Share" again and choose "Entire Screen".'
+          );
+          continue; // retry loop
+        }
 
-      setScreenSharing(true);
+        // ✅ Entire screen — proceed
+        setScreenShareError('');
 
-      screenIntervalRef.current = setInterval(() => {
-        if (!s.connected) { stopScreenCapture(stream); return; }
-        ctx.drawImage(video, 0, 0, 1280, 720);
-        const frame = canvas.toDataURL('image/jpeg', 0.35);
-        s.emit('screen_frame', { sessionId, studentId: rollNo, frame });
-      }, 3000);
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.muted = true;
+        await video.play();
 
-      stream.getVideoTracks()[0].addEventListener('ended', () => {
-        stopScreenCapture(stream);
-      });
-    } catch {
-      // User denied screen share — web/agent tracking still works
-      setScreenSharing(false);
+        const canvas = document.createElement('canvas');
+        canvas.width  = 1280;
+        canvas.height = 720;
+        const ctx = canvas.getContext('2d');
+
+        setScreenSharing(true);
+
+        screenIntervalRef.current = setInterval(() => {
+          if (!s.connected) { stopScreenCapture(stream); return; }
+          ctx.drawImage(video, 0, 0, 1280, 720);
+          const frame = canvas.toDataURL('image/jpeg', 0.35);
+          s.emit('screen_frame', { sessionId, studentId: rollNo, frame });
+        }, 3000);
+
+        track.addEventListener('ended', () => stopScreenCapture(stream));
+        return; // success — exit the retry loop
+
+      } catch {
+        // User cancelled / dismissed the dialog
+        if (stream) stream.getTracks().forEach(t => t.stop());
+        setScreenSharing(false);
+        setScreenShareError('⚠️ Screen share was cancelled. The admin cannot see your screen. Only agent tracking is active.');
+        return;
+      }
     }
+    // All retries exhausted
+    setScreenShareError('⚠️ Could not start screen sharing. Please rejoin and select "Entire Screen".');
   };
 
   const stopScreenCapture = (stream) => {
@@ -119,6 +149,7 @@ export function StudentJoin() {
     setScreenSharing(false);
     try { stream?.getTracks().forEach(t => t.stop()); } catch {}
   };
+
 
   /* ── Protocol trigger + 4.5s verification ────────────────────── */
   const triggerProtocolAndJoin = async () => {
@@ -406,16 +437,26 @@ export function StudentJoin() {
             </p>
 
             {/* Screen share status */}
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', gap: '7px',
-              padding: '6px 14px', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 600, marginBottom: '16px',
-              background: screenSharing ? 'rgba(34,197,94,0.12)' : 'rgba(245,158,11,0.12)',
-              color: screenSharing ? '#4ade80' : '#f59e0b',
-              border: `1px solid ${screenSharing ? 'rgba(34,197,94,0.3)' : 'rgba(245,158,11,0.3)'}`
-            }}>
-              <ScreenIcon size={13} />
-              {screenSharing ? '📡 Screen Sharing Active — Admin Can View' : '⚠️ Screen Not Shared — Only Agent Tracking Active'}
-            </div>
+            {screenSharing ? (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '6px 14px', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 600, marginBottom: '16px', background: 'rgba(34,197,94,0.12)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}>
+                <ScreenIcon size={13} /> 📡 Entire Screen Sharing Active — Admin Can View
+              </div>
+            ) : screenShareError ? (
+              <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', textAlign: 'left' }}>
+                <div style={{ color: '#f87171', fontSize: '0.82rem', marginBottom: '8px' }}>{screenShareError}</div>
+                <button
+                  onClick={() => startScreenCapture(socketRef.current)}
+                  className="btn-primary"
+                  style={{ padding: '6px 14px', fontSize: '0.78rem', gap: '6px' }}
+                >
+                  <ScreenIcon size={13} /> Share Entire Screen Again
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '6px 14px', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 600, marginBottom: '16px', background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}>
+                <ScreenIcon size={13} /> ⚠️ Screen Not Shared — Only Agent Tracking Active
+              </div>
+            )}
 
             <div style={{ background: '#090d16', padding: '14px', borderRadius: '10px', textAlign: 'left', fontSize: '0.82rem', border: '1px solid var(--border-color)', marginBottom: '20px' }}>
               <div style={{ color: '#38bdf8', fontWeight: 700, marginBottom: '4px' }}>🛡️ Proctoring Active:</div>
