@@ -104,6 +104,17 @@ function initSocketHandlers(io) {
       }
     });
 
+    // ── Screen frame relay (student → faculty only) ──────────────
+    socket.on('screen_frame', ({ sessionId, studentId, frame }) => {
+      if (!sessionId || !studentId || !frame) return;
+      // Use socket.to() so frame is NOT echoed back to the student sender
+      socket.to(sessionId).emit('student_screen_frame', {
+        studentId,
+        frame,
+        timestamp: Date.now()
+      });
+    });
+
     // ── Disconnect: mark student offline and notify faculty ──────
     socket.on('disconnect', async () => {
       try {

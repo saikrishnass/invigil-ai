@@ -390,9 +390,30 @@ def telemetry_loop():
     last_app = ""
     last_title = ""
     last_idle_alert = 0
+    tick = 0  # used for periodic session-end check
 
     while s["is_monitoring"]:
         try:
+            # ── Periodic session-end check every 30s (60 ticks × 0.5s) ──────
+            tick += 1
+            if tick % 60 == 0:
+                try:
+                    server_base = s.get("server_url", "http://localhost:5000").rstrip("/")
+                    sess_url = f"{server_base}/api/sessions/{s['session_id']}"
+                    req = urllib.request.Request(sess_url)
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        if data.get("session", {}).get("status") == "ended":
+                            log_debug("Periodic check: session ended — stopping monitoring")
+                            s["is_monitoring"] = False
+                            s["session_id"] = ""
+                            s["student_name"] = ""
+                            s["roll_no"] = ""
+                            save_session_state()
+                            break
+                except Exception as ce:
+                    log_debug(f"Session status check failed: {ce}")
+
             app, title = get_active_window_info()
             idle = get_idle_seconds()
 
@@ -418,6 +439,7 @@ def telemetry_loop():
             pass
 
         time.sleep(0.5)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOCAL HTTP SERVER
