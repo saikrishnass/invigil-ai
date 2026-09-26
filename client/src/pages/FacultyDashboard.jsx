@@ -367,7 +367,6 @@ export function FacultyDashboard() {
                       className="btn-secondary"
                       style={{
                         padding: '3px 10px', fontSize: '0.75rem', gap: '5px',
-                        borderColor: 'rgba(255,255,255,0.1)',
                         color: st.isFlagged ? '#f87171' : 'var(--text-muted)',
                         borderColor: st.isFlagged ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.1)'
                       }}
