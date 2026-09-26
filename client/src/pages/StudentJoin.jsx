@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { Navbar } from '../components/Navbar';
 import {
-  Shield, CheckCircle, Download, Loader, AlertCircle, Monitor
+  Shield, CheckCircle, Download, Loader, AlertCircle, Monitor, RefreshCw, XCircle
 } from 'lucide-react';
 import { API_BASE, BACKEND_URL, SOCKET_URL } from '../config/api';
 
@@ -16,33 +16,44 @@ const AGENT_MISSING = 'missing';
 export function StudentJoin() {
   const { sessionId: paramSessionId } = useParams();
 
-  const [sessionId, setSessionId]   = useState(paramSessionId || '');
-  const [passcode,  setPasscode]    = useState('');
-  const [name,      setName]        = useState('');
-  const [rollNo,    setRollNo]      = useState('');
-  const [joined,    setJoined]      = useState(false);
-  const [socket,    setSocket]      = useState(null);
-  const [error,     setError]       = useState('');
-  const [agentState, setAgentState] = useState(AGENT_IDLE);
-  const [downloaded, setDownloaded] = useState(false);
-  const [webOnlyMode, setWebOnlyMode] = useState(false);
+  const [sessionId, setSessionId]       = useState(paramSessionId || '');
+  const [passcode,  setPasscode]        = useState('');
+  const [name,      setName]            = useState('');
+  const [rollNo,    setRollNo]          = useState('');
+  const [joined,    setJoined]          = useState(false);
+  const [socket,    setSocket]          = useState(null);
+  const [error,     setError]           = useState('');
+  const [agentState, setAgentState]     = useState(AGENT_IDLE);
+  const [downloaded, setDownloaded]     = useState(false);
+  const [webOnlyMode, setWebOnlyMode]   = useState(false);
+  const [isLaunching, setIsLaunching]   = useState(false);
+  const [launchBlocked, setLaunchBlocked] = useState(false);
 
   /* ── Agent detection with multi-host fallback ─────────────────── */
-  const checkAgent = async () => {
-    setAgentState(AGENT_CHECKING);
+  const quickPingAgent = async () => {
     for (const host of ['127.0.0.1', 'localhost']) {
       try {
         const ctrl = new AbortController();
-        const tid  = setTimeout(() => ctrl.abort(), 1800);
+        const tid  = setTimeout(() => ctrl.abort(), 800);
         const res  = await fetch(`http://${host}:48123/ping`, { signal: ctrl.signal });
         clearTimeout(tid);
         if (res.ok) {
-          setAgentState(AGENT_FOUND);
           return true;
         }
       } catch {
         // try next host
       }
+    }
+    return false;
+  };
+
+  const checkAgent = async () => {
+    setAgentState(AGENT_CHECKING);
+    const active = await quickPingAgent();
+    if (active) {
+      setAgentState(AGENT_FOUND);
+      setLaunchBlocked(false);
+      return true;
     }
     setAgentState(AGENT_MISSING);
     return false;
@@ -53,24 +64,15 @@ export function StudentJoin() {
     checkAgent();
   }, []);
 
-  // Auto-poll every 2.5s once downloaded or missing so the UI unlocks as soon as the app starts
+  // Auto-poll every 2.5s once missing so UI auto-unlocks if student launches .exe manually
   React.useEffect(() => {
     if (agentState === AGENT_FOUND || joined) return;
     const interval = setInterval(async () => {
-      for (const host of ['127.0.0.1', 'localhost']) {
-        try {
-          const ctrl = new AbortController();
-          const tid = setTimeout(() => ctrl.abort(), 1200);
-          const res = await fetch(`http://${host}:48123/ping`, { signal: ctrl.signal });
-          clearTimeout(tid);
-          if (res.ok) {
-            setAgentState(AGENT_FOUND);
-            clearInterval(interval);
-            return;
-          }
-        } catch {
-          // keep searching
-        }
+      const active = await quickPingAgent();
+      if (active) {
+        setAgentState(AGENT_FOUND);
+        setLaunchBlocked(false);
+        clearInterval(interval);
       }
     }, 2500);
     return () => clearInterval(interval);
@@ -86,31 +88,49 @@ export function StudentJoin() {
     document.body.removeChild(a);
   };
 
-  /* ── Join handler ────────────────────────────────────────────── */
-  const handleJoin = async (e) => {
-    e.preventDefault();
-    if (!sessionId || !passcode || !name || !rollNo) {
-      setError('Please fill in all details.');
-      return;
+  const triggerProtocolAndJoin = async () => {
+    setIsLaunching(true);
+    setLaunchBlocked(false);
+    setError('');
+
+    // Trigger Windows Protocol Handler via browser URL
+    const protocolUrl = `invigilai://start?sessionId=${encodeURIComponent(sessionId)}&name=${encodeURIComponent(name)}&rollNo=${encodeURIComponent(rollNo)}&serverUrl=${encodeURIComponent(BACKEND_URL)}`;
+    window.location.href = protocolUrl;
+
+    // Check for 4.5s (9 attempts @ 500ms) if agent starts serving 127.0.0.1:48123
+    let found = false;
+    for (let i = 0; i < 9; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const active = await quickPingAgent();
+      if (active) {
+        found = true;
+        break;
+      }
     }
 
+    if (found) {
+      setAgentState(AGENT_FOUND);
+      setIsLaunching(false);
+      await completeJoin();
+    } else {
+      setIsLaunching(false);
+      setAgentState(AGENT_MISSING);
+      setLaunchBlocked(true);
+    }
+  };
+
+  const completeJoin = async () => {
     try {
-      const res  = await fetch(`${API_BASE}/sessions/${sessionId}`);
-      const data = await res.json();
-
-      if (!res.ok || !data.session) { setError('Invalid Session Code.'); return; }
-      if (data.session.password !== passcode) { setError('Incorrect Passcode.'); return; }
-
-      // Tell the local agent to start tracking
+      // Tell local agent to start monitoring session
       try {
         await fetch('http://127.0.0.1:48123/start_session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ serverUrl: BACKEND_URL, sessionId, name, rollNo })
         });
-      } catch { /* agent might not be running – web events still work */ }
+      } catch { /* agent might have received parameters via invigilai:// protocol */ }
 
-      // WebSocket
+      // WebSocket connection for real-time monitoring
       const s = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
       s.on('connect', () => {
         s.emit('student_web_join', { sessionId, studentId: rollNo, studentName: name });
@@ -131,6 +151,36 @@ export function StudentJoin() {
       setSocket(s);
       setJoined(true);
       setError('');
+    } catch {
+      setError('Server connection error. Please try again.');
+    }
+  };
+
+  /* ── Main Join Handler ────────────────────────────────────────── */
+  const handleJoin = async (e) => {
+    e.preventDefault();
+    if (!sessionId || !passcode || !name || !rollNo) {
+      setError('Please fill in all details.');
+      return;
+    }
+
+    try {
+      // Validate session code & passcode
+      const res  = await fetch(`${API_BASE}/sessions/${sessionId}`);
+      const data = await res.json();
+
+      if (!res.ok || !data.session) { setError('Invalid Session Code.'); return; }
+      if (data.session.password !== passcode) { setError('Incorrect Passcode.'); return; }
+
+      // Check if desktop agent is already running
+      const isAlreadyRunning = await quickPingAgent();
+      if (isAlreadyRunning || webOnlyMode) {
+        setAgentState(AGENT_FOUND);
+        await completeJoin();
+      } else {
+        // Agent not running: Trigger invigilai:// prompt & check if user accepts
+        await triggerProtocolAndJoin();
+      }
     } catch {
       setError('Server connection error. Please try again.');
     }
@@ -165,21 +215,20 @@ export function StudentJoin() {
       </div>
     );
 
-    // AGENT_MISSING: Show crystal-clear instructions for Lab PCs
+    // AGENT_MISSING: Instructions
     return (
       <div style={{ ...badge('#f59e0b', 'rgba(245,158,11,0.08)', 'rgba(245,158,11,0.25)'), flexDirection: 'column', alignItems: 'flex-start', gap: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <AlertCircle size={15} />
-          <span style={{ fontWeight: 700 }}>Desktop Agent Not Running on this PC</span>
+          <span style={{ fontWeight: 700 }}>Desktop Agent Not Running</span>
         </div>
         
         <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6, background: 'rgba(0,0,0,0.25)', padding: '10px 12px', borderRadius: '8px', width: '100%' }}>
-          <div><strong>Step 1:</strong> Click <strong>Download Agent</strong> below.</div>
-          <div><strong>Step 2:</strong> Go to your <strong>Downloads</strong> folder and double-click <strong>invigilAI-Agent.exe</strong> to run it.</div>
-          <div><strong>Step 3:</strong> If Windows warns <em>"Windows protected your PC"</em>, click <strong>"More info" ➔ "Run anyway"</strong>.</div>
+          <div><strong>Automatic:</strong> Click <strong>Start Practical Exam</strong> to launch <em>invigilAI Agent</em> via Chrome prompt.</div>
+          <div><strong>Manual:</strong> If prompt is blocked, click <strong>Download Agent (.exe)</strong> below and double-click to run.</div>
           <div style={{ color: '#38bdf8', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Loader size={12} className="spin" />
-            <span>Auto-detecting... This box turns green automatically once opened!</span>
+            <span>Auto-detecting agent on port 48123…</span>
           </div>
         </div>
 
@@ -253,10 +302,46 @@ export function StudentJoin() {
               </button>
             </div>
 
-            {/* Status badge (below the row) */}
+            {/* Status badge (below row) */}
             {agentState !== AGENT_IDLE && (
               <div style={{ marginBottom: '16px' }}>
                 <AgentBadge />
+              </div>
+            )}
+
+            {/* ── Cancel / Blocked Banner with Retry ── */}
+            {launchBlocked && (
+              <div style={{
+                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)',
+                borderRadius: '10px', padding: '14px', marginBottom: '16px', color: '#f87171'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '0.9rem', marginBottom: '6px' }}>
+                  <XCircle size={18} />
+                  <span>Agent Launch Cancelled / Not Running</span>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: '12px' }}>
+                  You clicked <strong>Cancel</strong> on Chrome's prompt or the Agent executable is missing. You <strong>cannot enter</strong> the exam without running the agent.
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={triggerProtocolAndJoin}
+                    disabled={isLaunching}
+                    className="btn-primary"
+                    style={{ padding: '8px 14px', fontSize: '0.8rem', gap: '6px', background: '#dc2626', borderColor: '#ef4444' }}
+                  >
+                    <RefreshCw size={14} className={isLaunching ? 'spin' : ''} />
+                    {isLaunching ? 'Opening Agent Prompt…' : '🔄 Retry Launch & Join'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadAgent}
+                    className="btn-secondary"
+                    style={{ padding: '8px 14px', fontSize: '0.8rem', gap: '6px' }}
+                  >
+                    <Download size={14} /> Download Agent (.exe)
+                  </button>
+                </div>
               </div>
             )}
 
@@ -296,16 +381,22 @@ export function StudentJoin() {
 
               <button
                 type="submit"
-                disabled={!canJoin}
+                disabled={isLaunching}
                 className="btn-primary"
                 style={{
                   width: '100%', justifyContent: 'center', padding: '13px',
                   marginTop: '6px',
-                  opacity: canJoin ? 1 : 0.45,
-                  cursor: canJoin ? 'pointer' : 'not-allowed'
+                  opacity: isLaunching ? 0.7 : 1,
+                  cursor: isLaunching ? 'not-allowed' : 'pointer'
                 }}
               >
-                {canJoin ? '🚀 Start Practical Exam' : '⚠️ Check Agent First to Unlock'}
+                {isLaunching ? (
+                  <><Loader size={16} className="spin" /> Opening Agent Prompt & Verifying…</>
+                ) : canJoin ? (
+                  '🚀 Start Practical Exam'
+                ) : (
+                  '🚀 Launch Agent & Join Exam'
+                )}
               </button>
             </form>
           </div>

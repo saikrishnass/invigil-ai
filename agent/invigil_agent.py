@@ -17,6 +17,7 @@ import threading
 import time
 import winreg
 import urllib.request
+import urllib.parse
 from ctypes import wintypes
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import psutil
@@ -46,6 +47,49 @@ def log_debug(msg):
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
     except Exception:
         pass
+
+def register_protocol_handler():
+    """Register invigilai:// protocol handler in Windows registry (HKCU)"""
+    try:
+        exe_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
+        key_path = r"Software\Classes\invigilai"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:invigilAI Protocol")
+            winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
+            with winreg.CreateKey(key, r"shell\open\command") as cmd_key:
+                if getattr(sys, 'frozen', False):
+                    cmd_val = f'"{exe_path}" "%1"'
+                else:
+                    cmd_val = f'"{sys.executable}" "{exe_path}" "%1"'
+                winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ, cmd_val)
+        log_debug("Protocol handler invigilai:// registered successfully")
+    except Exception as e:
+        log_debug(f"Failed to register protocol handler: {e}")
+
+def parse_protocol_url(url_str):
+    """Parse invigilai://start?sessionId=...&name=...&rollNo=...&serverUrl=..."""
+    try:
+        log_debug(f"Parsing protocol URL: {url_str}")
+        parsed = urllib.parse.urlparse(url_str)
+        qs = urllib.parse.parse_qs(parsed.query)
+        
+        session_id = qs.get("sessionId", [""])[0]
+        name = qs.get("name", [""])[0]
+        roll_no = qs.get("rollNo", [""])[0]
+        server_url = qs.get("serverUrl", ["http://localhost:5000"])[0]
+        
+        if session_id and roll_no:
+            SESSION["session_id"] = session_id
+            SESSION["student_name"] = name
+            SESSION["roll_no"] = roll_no
+            SESSION["server_url"] = server_url.strip().rstrip("/")
+            SESSION["is_monitoring"] = True
+            save_session_state()
+            log_debug(f"Protocol URL parsed successfully for session {session_id}")
+            return True
+    except Exception as e:
+        log_debug(f"Error parsing protocol URL: {e}")
+    return False
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 AGENT_NAME     = "invigilAI-Agent"
@@ -482,13 +526,19 @@ def start_http_server():
 if __name__ == "__main__":
     log_debug("=== Process started ===")
     try:
+        register_protocol_handler()
+
         if not is_installed():
             log_debug("Not installed, calling self_install()")
             self_install()
         else:
             log_debug("Already installed")
 
-        if load_session_state() and SESSION["is_monitoring"]:
+        protocol_started = False
+        if len(sys.argv) > 1 and sys.argv[1].startswith("invigilai://"):
+            protocol_started = parse_protocol_url(sys.argv[1])
+
+        if protocol_started or (load_session_state() and SESSION["is_monitoring"]):
             log_debug(f"Resuming monitoring for session {SESSION['session_id']}")
             threading.Thread(target=telemetry_loop, daemon=True).start()
         else:
