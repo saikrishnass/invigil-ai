@@ -148,6 +148,15 @@ export function StudentJoin() {
         details: 'Returned to exam window'
       });
 
+      // ── If admin ends session, kick student out and stop agent ──
+      s.on('session_ended', () => {
+        setJoined(false);
+        setError('⚠️ The faculty has ended this practical session. Your exam has been closed.');
+        s.disconnect();
+        // Stop local agent monitoring
+        fetch('http://127.0.0.1:48123/stop_session', { method: 'POST' }).catch(() => {});
+      });
+
       setSocket(s);
       setJoined(true);
       setError('');

@@ -363,6 +363,18 @@ def send_event(event_type, app_name="", title="", extra=None):
                 )
                 with urllib.request.urlopen(req, timeout=4) as res:
                     if res.status == 200:
+                        # ── Check if server says session has ended ────────
+                        try:
+                            resp_body = json.loads(res.read().decode("utf-8"))
+                            if resp_body.get("message") == "session_ended":
+                                log_debug("Server reported session_ended — stopping monitoring")
+                                s["is_monitoring"] = False
+                                s["session_id"] = ""
+                                s["student_name"] = ""
+                                s["roll_no"] = ""
+                                save_session_state()
+                        except Exception:
+                            pass
                         break
             except Exception as e:
                 log_debug(f"Failed sending event to {u}: {e}")

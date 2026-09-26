@@ -95,6 +95,12 @@ router.post('/agent/event', async (req, res) => {
       return res.status(400).json({ error: 'sessionId and studentId are required.' });
     }
 
+    // ── Block events if session has ended ──────────────────────────
+    const session = await Session.findOne({ sessionId });
+    if (!session || session.status === 'ended') {
+      return res.status(200).json({ success: false, message: 'session_ended' });
+    }
+
     const isViolation = checkIfViolation(appName, windowTitle);
 
     // Update or insert Student safely
@@ -107,6 +113,7 @@ router.post('/agent/event', async (req, res) => {
         currentApp: appName || 'VS Code',
         currentTitle: windowTitle || 'Active',
         clientType: 'desktop_agent',
+        isOnline: true,
         violationsCount: isViolation ? 1 : 0,
         isFlagged: isViolation,
         focusScore: isViolation ? 95 : 100
@@ -115,6 +122,7 @@ router.post('/agent/event', async (req, res) => {
       student.currentApp = appName || student.currentApp;
       student.currentTitle = windowTitle || student.currentTitle;
       student.lastSeen = new Date();
+      student.isOnline = true;
       if (isViolation) {
         student.violationsCount = (student.violationsCount || 0) + 1;
         student.isFlagged = true;
@@ -160,10 +168,25 @@ router.post('/sessions/:sessionId/end', async (req, res) => {
       { status: 'ended', endedAt: new Date() },
       { new: true }
     );
+    // Mark all students offline
+    await Student.updateMany({ sessionId: req.params.sessionId }, { isOnline: false });
     if (req.io) {
       req.io.to(req.params.sessionId).emit('session_ended', { sessionId: req.params.sessionId });
     }
     res.json({ success: true, session });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7. Get logs for a specific student
+router.get('/sessions/:sessionId/students/:studentId/logs', async (req, res) => {
+  try {
+    const logs = await LogEvent
+      .find({ sessionId: req.params.sessionId, studentId: req.params.studentId })
+      .sort({ timestamp: -1 })
+      .limit(100);
+    res.json({ success: true, logs });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

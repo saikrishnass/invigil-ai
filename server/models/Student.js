@@ -9,6 +9,7 @@ const StudentSchema = new mongoose.Schema({
   focusScore: { type: Number, default: 100 },
   violationsCount: { type: Number, default: 0 },
   isFlagged: { type: Boolean, default: false },
+  isOnline: { type: Boolean, default: true },
   clientType: { type: String, enum: ['desktop_agent', 'web_browser'], default: 'desktop_agent' },
   joinedAt: { type: Date, default: Date.now },
   lastSeen: { type: Date, default: Date.now }
@@ -17,3 +18,4 @@ const StudentSchema = new mongoose.Schema({
 StudentSchema.index({ sessionId: 1, studentId: 1 }, { unique: true });
 
 module.exports = mongoose.model('Student', StudentSchema);
+
