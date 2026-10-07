@@ -263,7 +263,16 @@ def get_active_window_info():
             elif "settings" in lt:
                 proc_name = "settings.exe"
 
-        app_name = clean_app_name(proc_name) if proc_name else "Desktop"
+        # Handle explorer.exe shell clicks (Desktop wallpaper, taskbar, start menu, alt-tab)
+        if proc_name.lower() == "explorer.exe":
+            lower_title = raw_title.lower()
+            if not raw_title or lower_title in ["program manager", "desktop", "taskbar", "windows shell experience host", "task switching", "file explorer"]:
+                app_name = "Desktop"
+                raw_title = "Desktop Wallpaper"
+            else:
+                app_name = "File Explorer"
+        else:
+            app_name = clean_app_name(proc_name) if proc_name else "Desktop"
 
         # If window title is empty (e.g. desktop, taskbar), use the app name
         if not raw_title:

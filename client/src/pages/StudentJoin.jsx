@@ -86,10 +86,13 @@ export function StudentJoin() {
       try {
         stream = await navigator.mediaDevices.getDisplayMedia({
           video: {
-            displaySurface: 'monitor', // hint to Chrome: prefer Entire Screen
+            displaySurface: 'monitor', // hint to Chrome: default to Entire Screen
             width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { max: 1 }
           },
-          audio: false
+          audio: false,
+          selfBrowserSurface: 'exclude', // Excludes current browser tab from screen picker
+          surfaceSwitching: 'exclude',   // Disables Chrome surface switching bar
+          preferCurrentTab: false
         });
 
         // ── Enforce Entire Screen only ────────────────────────────

@@ -14,13 +14,32 @@ function checkIfViolation(appName, windowTitle) {
   const app = (appName || '').toLowerCase();
   const title = (windowTitle || '').toLowerCase();
 
+  // Desktop background, Taskbar, or Program Manager clicks are NOT violations
+  if (app === 'desktop' || app === 'system' || title === 'program manager' || title === 'desktop' || title === 'standby' || title === 'desktop wallpaper') {
+    return false;
+  }
+
+  // Bare File Explorer shell click without an active folder window is NOT a violation
+  if ((app === 'file explorer' || app === 'explorer') && (title === 'file explorer' || title === 'program manager' || title === 'desktop' || !title)) {
+    return false;
+  }
+
   // Flag AI assistants, social media, entertainment, unapproved apps
   const flaggedKeywords = [
     'chatgpt', 'claude', 'gemini', 'copilot', 'openai',
     'youtube', 'discord', 'whatsapp', 'instagram', 'facebook',
     'spotify', 'telegram', 'netflix', 'game', 'reddit',
-    'notepad', 'file explorer', 'explorer', 'calculator'
+    'notepad', 'calculator'
   ];
+
+  // Specific File Explorer folder browsing IS flagged only if an actual folder/file path is open
+  if (app.includes('file explorer') || title.includes('file explorer')) {
+    if (title && title !== 'file explorer' && title !== 'program manager' && title !== 'desktop') {
+      return true;
+    }
+    return false;
+  }
+
   for (const kw of flaggedKeywords) {
     if (title.includes(kw) || app.includes(kw)) return true;
   }
