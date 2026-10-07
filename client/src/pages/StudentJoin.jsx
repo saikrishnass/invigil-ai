@@ -477,6 +477,7 @@ export function StudentJoin() {
                 socket?.disconnect();
                 setJoined(false);
                 setScreenSharing(false);
+                fetch('http://127.0.0.1:48123/stop_session', { method: 'POST' }).catch(() => {});
               }}
               className="btn-secondary"
               style={{ borderColor: 'rgba(239,68,68,0.4)', color: '#f87171', padding: '8px 18px', fontSize: '0.85rem' }}

@@ -336,6 +336,14 @@ def get_idle_seconds():
         pass
     return 0
 
+def exit_agent_process(delay_sec=0.5):
+    """Gracefully stop monitoring and terminate invigilAI-Agent.exe executable process."""
+    def _do_exit():
+        time.sleep(delay_sec)
+        log_debug("Exiting agent process completely")
+        os._exit(0)
+    threading.Thread(target=_do_exit, daemon=True).start()
+
 def send_event(event_type, app_name="", title="", extra=None):
     s = SESSION
     if not s["session_id"] or not s["roll_no"]:
@@ -376,12 +384,13 @@ def send_event(event_type, app_name="", title="", extra=None):
                         try:
                             resp_body = json.loads(res.read().decode("utf-8"))
                             if resp_body.get("message") == "session_ended":
-                                log_debug("Server reported session_ended — stopping monitoring")
+                                log_debug("Server reported session_ended — terminating agent .exe process")
                                 s["is_monitoring"] = False
                                 s["session_id"] = ""
                                 s["student_name"] = ""
                                 s["roll_no"] = ""
                                 save_session_state()
+                                exit_agent_process(0.5)
                         except Exception:
                             pass
                         break
@@ -413,12 +422,13 @@ def telemetry_loop():
                     with urllib.request.urlopen(req, timeout=5) as resp:
                         data = json.loads(resp.read().decode("utf-8"))
                         if data.get("session", {}).get("status") == "ended":
-                            log_debug("Periodic check: session ended — stopping monitoring")
+                            log_debug("Periodic check: session ended — terminating agent .exe process")
                             s["is_monitoring"] = False
                             s["session_id"] = ""
                             s["student_name"] = ""
                             s["roll_no"] = ""
                             save_session_state()
+                            exit_agent_process(0.5)
                             break
                 except Exception as ce:
                     log_debug(f"Session status check failed: {ce}")
@@ -521,20 +531,23 @@ class AgentHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
-        elif self.path == "/stop_session":
+        elif self.path in ("/stop_session", "/exit", "/quit"):
+            log_debug(f"Received {self.path} endpoint — terminating agent .exe process")
             SESSION["is_monitoring"] = False
             SESSION["session_id"]    = ""
             SESSION["student_name"]  = ""
             SESSION["roll_no"]       = ""
             save_session_state()
 
-            body = json.dumps({"success": True}).encode("utf-8")
+            body = json.dumps({"success": True, "message": "Agent terminating"}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self._cors()
             self.end_headers()
             self.wfile.write(body)
+
+            exit_agent_process(0.5)
         else:
             self.send_response(404)
             self._cors()
