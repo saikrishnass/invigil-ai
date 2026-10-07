@@ -5,7 +5,7 @@ import { CreateSessionModal } from '../components/CreateSessionModal';
 import { PDFReportModal } from '../components/PDFReportModal';
 import {
   Users, ShieldCheck, AlertTriangle, Clock, Copy, Check,
-  FileText, Monitor, StopCircle, X, Wifi, WifiOff, Maximize2, Filter
+  FileText, Monitor, StopCircle, X, Wifi, WifiOff, Maximize2, Filter, Download
 } from 'lucide-react';
 import { API_BASE, SOCKET_URL } from '../config/api';
 
@@ -117,6 +117,54 @@ export function FacultyDashboard() {
   };
 
   const closeScreenViewer = () => { setViewingStudent(null); setViewingFrame(null); setViewingTimestamp(null); };
+
+  // ── Download individual student logs as CSV ──────────────────────
+  const downloadStudentLogs = async (e, st) => {
+    if (e) e.stopPropagation();
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}/students/${st.studentId}/logs`);
+      const data = await res.json();
+      const stLogs = (data.logs && data.logs.length > 0)
+        ? data.logs
+        : logs.filter(l => l.studentId === st.studentId);
+
+      const headers = ['Timestamp', 'Event Type', 'App Name', 'Window Title / Details', 'Violation Status'];
+      const rows = stLogs.map(l => [
+        `"${new Date(l.timestamp).toLocaleString()}"`,
+        `"${l.eventType || 'app_switch'}"`,
+        `"${(l.appName || '').replace(/"/g, '""')}"`,
+        `"${(l.details || l.windowTitle || '').replace(/"/g, '""')}"`,
+        `"${l.isViolation ? 'VIOLATION' : 'CLEAN'}"`
+      ]);
+
+      const csvHeaderInfo = [
+        `"invigilAI Practical Proctoring - Student Audit Log"`,
+        `"Student Name: ${st.name}"`,
+        `"Roll Number: ${st.studentId}"`,
+        `"Session Code: ${sessionId}"`,
+        `"Subject: ${session?.subject || 'Lab Practical'}"`,
+        `"Focus Score: ${st.focusScore}%"`,
+        `"Total Violations: ${st.violationsCount || 0}"`,
+        `""`,
+        headers.join(',')
+      ].join('\n');
+
+      const csvContent = csvHeaderInfo + '\n' + rows.map(r => r.join(',')).join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `invigilAI_Log_${st.name.replace(/[^a-zA-Z0-9]/g, '_')}_${st.studentId}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to download student logs:', err);
+      alert('Could not download student logs. Please try again.');
+    }
+  };
 
   const handleEndSession = async () => {
     if (!window.confirm('Are you sure you want to end this practical session?')) return;
@@ -297,25 +345,36 @@ export function FacultyDashboard() {
                           </div>
                         </div>
 
-                        {/* Footer row: focus score + view screen button */}
+                        {/* Footer row: focus score + download log + view screen button */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
                           <span style={{ color: 'var(--text-muted)' }}>
                             Focus: <strong style={{ color: st.focusScore >= 80 ? '#4ade80' : st.focusScore >= 60 ? '#facc15' : '#f87171' }}>{st.focusScore}%</strong>
                             &nbsp;·&nbsp; V: <strong style={{ color: '#f87171' }}>{st.violationsCount || 0}</strong>
                           </span>
 
-                          <button
-                            onClick={(e) => openScreenViewer(e, st)}
-                            className="btn-secondary"
-                            style={{
-                              padding: '4px 10px', fontSize: '0.74rem', gap: '4px',
-                              borderColor: hasFrame ? 'rgba(56,189,248,0.5)' : 'var(--border-color)',
-                              color: hasFrame ? '#38bdf8' : 'var(--text-dim)',
-                            }}
-                          >
-                            <Maximize2 size={11} />
-                            {hasFrame ? '👁 Live' : '📷 Screen'}
-                          </button>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <button
+                              onClick={(e) => downloadStudentLogs(e, st)}
+                              title={`Download ${st.name}'s Audit Log (CSV)`}
+                              className="btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '0.74rem', gap: '4px' }}
+                            >
+                              <Download size={11} /> Log
+                            </button>
+
+                            <button
+                              onClick={(e) => openScreenViewer(e, st)}
+                              className="btn-secondary"
+                              style={{
+                                padding: '4px 10px', fontSize: '0.74rem', gap: '4px',
+                                borderColor: hasFrame ? 'rgba(56,189,248,0.5)' : 'var(--border-color)',
+                                color: hasFrame ? '#38bdf8' : 'var(--text-dim)',
+                              }}
+                            >
+                              <Maximize2 size={11} />
+                              {hasFrame ? '👁 Live' : '📷 Screen'}
+                            </button>
+                          </div>
                         </div>
 
                         {!isOnline && (
@@ -347,13 +406,22 @@ export function FacultyDashboard() {
                 </div>
 
                 {filterStudentId && (
-                  <button
-                    onClick={() => setFilterStudentId(null)}
-                    className="btn-secondary"
-                    style={{ padding: '5px 12px', fontSize: '0.78rem', gap: '6px', color: 'var(--text-muted)' }}
-                  >
-                    <X size={12} /> Show All Students
-                  </button>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <button
+                      onClick={(e) => filterStudent && downloadStudentLogs(e, filterStudent)}
+                      className="btn-primary"
+                      style={{ padding: '5px 12px', fontSize: '0.78rem', gap: '6px' }}
+                    >
+                      <Download size={12} /> Download CSV Log
+                    </button>
+                    <button
+                      onClick={() => setFilterStudentId(null)}
+                      className="btn-secondary"
+                      style={{ padding: '5px 12px', fontSize: '0.78rem', gap: '6px', color: 'var(--text-muted)' }}
+                    >
+                      <X size={12} /> Show All Students
+                    </button>
+                  </div>
                 )}
               </div>
 
